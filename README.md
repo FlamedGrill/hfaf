@@ -23,8 +23,9 @@ No API keys or accounts required.
 ## Tuning
 
 The behaviour is controlled by a few plain constants at the top of `poll.py`
-(a search radius, a threshold, and a repeat-suppression cooldown). Adjust them
-to taste and commit the change.
+(a search radius, a value threshold, a minimum elevation angle above the
+horizon, and a repeat-suppression cooldown). Adjust them to taste and commit
+the change.
 
 ## Local run
 

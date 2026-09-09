@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Scheduled polling utility.
 
-Queries a source endpoint, keeps the entries whose value is at or below a
-threshold, and sends a push notification (via ntfy.sh) for anything new. A
-small state file suppresses repeats within a cooldown window. Standard library
-only, so it runs on a bare runner with no install step.
+Queries a source endpoint, keeps the entries that are low enough and high
+enough above the horizon to plausibly be seen from the ground, and sends a
+push notification (via ntfy.sh) for anything new. A small state file
+suppresses repeats within a cooldown window. Standard library only, so it
+runs on a bare runner with no install step.
 """
 
 import json
+import math
 import os
 import sys
 import time
@@ -17,8 +19,11 @@ import urllib.request
 # --------------------------------------------------------------------------
 # Tunables
 # --------------------------------------------------------------------------
-RADIUS = 8              # appended to the source URL
+RADIUS = 8              # outer search radius (appended to the source URL)
 THRESHOLD = 10000       # ignore entries whose value exceeds this
+MIN_ELEVATION_DEG = 10  # how high above the horizon it must appear to count
+                        # as "probably visible". Higher = only nearer/higher
+                        # things; lower it (e.g. 5) if alerts are too rare.
 COOLDOWN_MINUTES = 20   # don't repeat the same id within this window
 
 # --------------------------------------------------------------------------
@@ -33,6 +38,21 @@ USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
+
+FEET_PER_NM = 6076.12
+COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+
+
+def compass(deg):
+    """Turn a bearing in degrees into an 8-point compass label."""
+    return COMPASS[round(deg / 45.0) % 8]
+
+
+def elevation_deg(alt_ft, dst_nm):
+    """Angle above the horizon, in degrees, of something at alt_ft and dst_nm."""
+    if dst_nm <= 0:
+        return 90.0
+    return math.degrees(math.atan(alt_ft / (dst_nm * FEET_PER_NM)))
 
 
 def fetch_items(base):
@@ -72,26 +92,49 @@ def prune(seen, now):
     return {k: v for k, v in seen.items() if v >= cutoff}
 
 
-def matches(item):
-    """True if the entry is present and at or below the threshold."""
+def visible(item):
+    """True if the entry is low enough and high enough above the horizon."""
     val = item.get("alt_baro")
     if val is None or val == "ground":
         return False
     try:
-        return float(val) <= THRESHOLD
+        alt_ft = float(val)
     except (TypeError, ValueError):
         return False
+    if alt_ft > THRESHOLD:
+        return False
+    # If we know the distance, require a minimum angle above the horizon so
+    # far-but-low traffic sitting on the skyline is filtered out. If distance
+    # is unknown, don't exclude it on that basis.
+    dst = item.get("dst")
+    if isinstance(dst, (int, float)):
+        if elevation_deg(alt_ft, float(dst)) < MIN_ELEVATION_DEG:
+            return False
+    return True
 
 
 def format_message(item):
     label = (item.get("flight") or "").strip() or item.get("hex", "?")
     parts = [label]
+
     val = item.get("alt_baro")
     if isinstance(val, (int, float)):
         parts.append(f"{int(round(val)):,}ft")
-    dist = item.get("dst")
-    if isinstance(dist, (int, float)):
-        parts.append(f"{dist:.1f}nm")
+
+    # Where to look: distance plus the compass bearing from the viewing point.
+    dst = item.get("dst")
+    if isinstance(dst, (int, float)):
+        seg = f"{dst:.1f}nm"
+        bearing = item.get("dir")
+        if isinstance(bearing, (int, float)):
+            seg += f" {compass(bearing)}"
+        parts.append(seg)
+
+    # Where it's going: its track over the ground.
+    track = item.get("track")
+    if isinstance(track, (int, float)):
+        parts.append(f"heading {compass(track)}")
+
     return " · ".join(parts)
 
 
@@ -132,7 +175,7 @@ def main():
     count = 0
 
     for item in items:
-        if not matches(item):
+        if not visible(item):
             continue
         key = item.get("hex")
         if not key:
