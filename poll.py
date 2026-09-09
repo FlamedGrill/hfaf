@@ -27,13 +27,21 @@ COOLDOWN_MINUTES = 20   # don't repeat the same id within this window
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
 NTFY_BASE = "https://ntfy.sh"
 HTTP_TIMEOUT = 20
-USER_AGENT = "hfaf"
+# A browser-like User-Agent: the source sits behind a CDN that rejects
+# requests from datacentre IPs carrying an unusual agent string.
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
 
 def fetch_items(base):
     """Return the list of entries from the source, or None on any error."""
     url = f"{base}/{RADIUS}"
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+    )
     try:
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
             data = json.loads(resp.read().decode("utf-8"))
