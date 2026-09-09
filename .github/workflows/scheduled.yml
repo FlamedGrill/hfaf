@@ -39,7 +39,18 @@ jobs:
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           SOURCE_URL: ${{ secrets.SOURCE_URL }}
-        run: python poll.py
+        # GitHub's scheduled cron can't fire more often than every 5 minutes,
+        # so poll repeatedly within a single run. This loops for ~3.5 minutes
+        # at 30s intervals, giving ~30s effective resolution while staying
+        # well under 5 minutes total (so runs don't overlap) and well within
+        # the source's 1 request/second limit.
+        run: |
+          end=$((SECONDS + 210))
+          while :; do
+            python poll.py
+            [ $SECONDS -ge $end ] && break
+            sleep 30
+          done
 
       - name: Persist state
         if: ${{ !inputs.test }}
